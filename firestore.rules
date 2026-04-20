@@ -1,0 +1,31 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Leaderboard rules
+    match /leaderboard/{entryId} {
+      // Anyone can read top scores
+      allow list: if true;
+      allow get: if true;
+
+      // Allow creating a score
+      // We don't require auth for this simple arcade game, 
+      // but we validate the data shape.
+      allow create: if isValidScore(request.resource.data);
+    }
+
+    function isValidScore(data) {
+      return data.playerName is string 
+        && data.playerName.size() >= 1 
+        && data.playerName.size() <= 20
+        && data.score is number
+        && data.score >= 0
+        && data.createdAt == request.time;
+    }
+  }
+}

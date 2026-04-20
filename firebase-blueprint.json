@@ -1,0 +1,31 @@
+{
+  "entities": {
+    "ScoreEntry": {
+      "title": "Score Entry",
+      "description": "A single score record for the leaderboard",
+      "type": "object",
+      "properties": {
+        "playerName": {
+          "type": "string",
+          "description": "Name of the player"
+        },
+        "score": {
+          "type": "number",
+          "description": "Final score achieved"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the score was recorded"
+        }
+      },
+      "required": ["playerName", "score", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/leaderboard/{entryId}": {
+      "schema": "ScoreEntry",
+      "description": "Global leaderboard entries"
+    }
+  }
+}
