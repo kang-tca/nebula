@@ -159,8 +159,103 @@ const SHOP_ITEMS = [
   { id: "hull", name: "선체 확장 (Hull Max)", price: 1000, desc: "최대 내구도 한도를 1 늘립니다." }
 ];
 
+// --- Sound Manager ---
+const createSoundManager = () => {
+  if (typeof window === "undefined") return null;
+  
+  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  
+  const playPulse = (freq: number, duration: number, volume: number = 0.5, type: OscillatorType = "sine") => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  };
+
+  const playNoise = (duration: number, volume: number = 0.5) => {
+    const bufferSize = ctx.sampleRate * duration;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+    
+    noise.connect(gain);
+    gain.connect(ctx.destination);
+    
+    noise.start();
+    noise.stop(ctx.currentTime + duration);
+  };
+
+  return {
+    laser: () => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.1);
+    },
+    explosion: (scale: number = 1) => {
+      playNoise(0.2 * scale, 0.4);
+      playPulse(100, 0.2 * scale, 0.3, "square");
+    },
+    hit: () => {
+      playPulse(150, 0.3, 0.4, "sawtooth");
+    },
+    item: () => {
+      playPulse(523.25, 0.1, 0.2); // C5
+      setTimeout(() => playPulse(659.25, 0.1, 0.2), 50); // E5
+      setTimeout(() => playPulse(783.99, 0.2, 0.2), 100); // G5
+    },
+    bomb: () => {
+      playNoise(1.5, 0.6);
+      playPulse(60, 1.5, 0.5, "square");
+    },
+    click: () => {
+      playPulse(440, 0.05, 0.1);
+    },
+    correct: () => {
+      playPulse(880, 0.1, 0.3);
+      setTimeout(() => playPulse(1108.73, 0.1, 0.3), 100);
+      setTimeout(() => playPulse(1318.51, 0.3, 0.3), 200);
+    },
+    incorrect: () => {
+      playPulse(220, 0.2, 0.4, "sawtooth");
+      setTimeout(() => playPulse(110, 0.4, 0.4, "sawtooth"), 150);
+    },
+    bossHit: () => {
+      playNoise(0.05, 0.2);
+    }
+  };
+};
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const soundRef = useRef<ReturnType<typeof createSoundManager>>(null);
   const [status, setStatus] = useState<GameStatus>("MENU");
   const [score, setScore] = useState(0);
   const [stage, setStage] = useState(1);
@@ -174,6 +269,7 @@ export default function App() {
   });
   const [playerHp, setPlayerHp] = useState(3);
   const [activeFact, setActiveFact] = useState<string | null>(null);
+  const [quizFeedback, setQuizFeedback] = useState<"CORRECT" | "INCORRECT" | null>(null);
   const [powerUps, setPowerUps] = useState({ 
     speed: 1, 
     powerLevel: 1, 
@@ -189,6 +285,10 @@ export default function App() {
     }
     return 0;
   });
+
+  useEffect(() => {
+    soundRef.current = createSoundManager();
+  }, []);
 
   // Leaderboard state
   const [leaderboard, setLeaderboard] = useState<FirestoreScoreEntry[]>([]);
@@ -464,8 +564,10 @@ export default function App() {
               ms.y > b.y - b.height/2 && ms.y < b.y + b.height/2) {
             missiles.splice(j, 1);
             b.hp -= 1;
+            soundRef.current?.bossHit();
             createParticles(ms.x, ms.y, "#00f2ff");
             if (b.hp <= 0) {
+              soundRef.current?.explosion(2);
               createParticles(b.x, b.y, "#ff0055");
               gameState.current.screenShake = 20;
               gameState.current.bosses.splice(bIndex, 1);
@@ -510,6 +612,7 @@ export default function App() {
           gameState.current.bossBullets.splice(i, 1);
           createParticles(bb.x, bb.y, "#00f2ff");
         } else {
+          soundRef.current?.hit();
           gameState.current.bossBullets.splice(i, 1);
           setPlayerHp(prev => {
             const next = prev - 1;
@@ -528,6 +631,7 @@ export default function App() {
     // Auto Firing
     const currentFireRate = Math.max(8, FIRE_RATE_BASE / powerUps.fireRate);
     if (gameState.current.frameCount % Math.floor(currentFireRate) === 0) {
+      soundRef.current?.laser();
       fireMissile();
     }
 
@@ -593,6 +697,7 @@ export default function App() {
 
       if (dist < it.radius + PLAYER_RADIUS) {
         // Collect!
+        soundRef.current?.item();
         setPowerUps(prev => ({
           speed: it.type === "SPEED" ? prev.speed + 0.15 : prev.speed,
           powerLevel: it.type === "POWER" ? Math.min(4, prev.powerLevel + 1) : prev.powerLevel,
@@ -633,10 +738,12 @@ export default function App() {
       if (distP < m.radius + PLAYER_RADIUS) {
         if (powerUps.shield > 0) {
           // Shield absorbs!
+          soundRef.current?.bossHit();
           createParticles(m.x, m.y, "#00f2ff");
           m.hp -= 2; // Damage meteor
           gameState.current.screenShake = 5;
           if (m.hp <= 0) {
+            soundRef.current?.explosion(m.level/2);
             createParticles(m.x, m.y, "#475569");
             
             // Drop item probability from ANY level (Higher for low levels, but possible for all)
@@ -654,6 +761,7 @@ export default function App() {
           }
           continue;
         } else {
+          soundRef.current?.hit();
           createParticles(player.x, player.y, "#ff0055");
           createParticles(m.x, m.y, "#475569");
           gameState.current.screenShake = 15;
@@ -1018,6 +1126,7 @@ export default function App() {
   const useBomb = useCallback(() => {
     if (upgrades.bombs <= 0 || status !== "PLAYING") return;
     
+    soundRef.current?.bomb();
     setUpgrades(prev => ({ ...prev, bombs: prev.bombs - 1 }));
     gameState.current.screenShake = 30;
     
@@ -1139,11 +1248,13 @@ export default function App() {
   };
 
   const startGame = () => {
+    soundRef.current?.click();
     initGame(true);
     setStatus("PLAYING");
   };
 
   const startNextStage = () => {
+    soundRef.current?.click();
     setStage(prev => prev + 1);
     initGame(false);
     setStatus("PLAYING");
@@ -1152,19 +1263,27 @@ export default function App() {
   const handleQuizAnswer = (index: number) => {
     if (quizResolved || !currentQuiz) return;
     if (index === currentQuiz.correct) {
+      soundRef.current?.correct();
+      setQuizFeedback("CORRECT");
       setCurrency(prev => prev + 500);
       setActiveFact("정답입니다! 정비 포인트 500을 획득했습니다.");
     } else {
+       soundRef.current?.incorrect();
+       setQuizFeedback("INCORRECT");
        setCurrency(prev => Math.max(0, prev - 200));
        setActiveFact("오답입니다. 정비 포인트 200이 삭감되었습니다.");
     }
     setQuizResolved(true);
-    setTimeout(() => setActiveFact(null), 3000);
+    setTimeout(() => {
+      setActiveFact(null);
+      setQuizFeedback(null);
+    }, 3000);
   };
 
   const buyItem = (item: typeof SHOP_ITEMS[0]) => {
      if (currency < item.price) return;
      
+     soundRef.current?.click();
      if (item.id === "drone" && upgrades.drones < 2) {
         setUpgrades(prev => ({ ...prev, drones: prev.drones + 1 }));
         setCurrency(prev => prev - item.price);
@@ -1293,6 +1412,24 @@ export default function App() {
 
       {/* Overlays */}
       <AnimatePresence>
+        {/* Quiz Feedback Overlay */}
+        {quizFeedback && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.5 }}
+            animate={{ opacity: 1, scale: 1.2 }}
+            exit={{ opacity: 0, scale: 2 }}
+            className="fixed inset-0 flex items-center justify-center z-[100] pointer-events-none"
+          >
+            <div className={`px-12 py-6 rounded-full border-4 font-black text-6xl tracking-tighter ${
+              quizFeedback === "CORRECT" 
+                ? "bg-green-500/20 border-green-500 text-green-400 shadow-[0_0_50px_rgba(34,197,94,0.5)]" 
+                : "bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_50px_rgba(239,68,68,0.5)]"
+            }`}>
+              {quizFeedback === "CORRECT" ? "PERFECT!" : "FAILED"}
+            </div>
+          </motion.div>
+        )}
+
         {status === "MENU" && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -1323,6 +1460,7 @@ export default function App() {
                   <motion.button
                     whileHover={{ scale: 1.05, boxShadow: "0 0 30px #00f2ff" }}
                     whileTap={{ scale: 0.95 }}
+                    onMouseEnter={() => soundRef.current?.click()}
                     onClick={startGame}
                     className="px-16 py-6 border-2 border-[#00f2ff] bg-transparent text-[#00f2ff] font-bold text-2xl uppercase tracking-[4px] transition-all hover:bg-[#00f2ff] hover:text-black"
                   >
@@ -1380,6 +1518,7 @@ export default function App() {
                        return (
                         <button
                           key={item.id}
+                          onMouseEnter={() => !disabled && soundRef.current?.click()}
                           onClick={() => buyItem(item)}
                           disabled={disabled}
                           className="flex justify-between items-center bg-white/5 border border-white/10 p-3 hover:bg-white/10 transition-colors disabled:opacity-30 text-left"
@@ -1449,6 +1588,7 @@ export default function App() {
                   <motion.button
                     whileHover={{ scale: 1.05, backgroundColor: "#00f2ff", color: "#000" }}
                     whileTap={{ scale: 0.95 }}
+                    onMouseEnter={() => soundRef.current?.click()}
                     onClick={startNextStage}
                     className="w-full py-6 border-2 border-[#00f2ff] text-[#00f2ff] font-bold text-xl uppercase tracking-[10px] transition-all"
                   >
@@ -1496,6 +1636,7 @@ export default function App() {
                     <motion.button
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
+                      onMouseEnter={() => !isSaving && soundRef.current?.click()}
                       onClick={saveScore}
                       disabled={!playerName.trim() || isSaving}
                       className="w-full py-4 bg-[#ff0055] text-white font-bold text-sm uppercase tracking-[4px] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1508,6 +1649,7 @@ export default function App() {
                     <motion.button
                       whileHover={{ scale: 1.05, backgroundColor: "#ff0055", color: "#fff" }}
                       whileTap={{ scale: 0.95 }}
+                      onMouseEnter={() => soundRef.current?.click()}
                       onClick={startGame}
                       className="w-full py-5 border border-[#ff0055] text-[#ff0055] font-bold text-lg uppercase tracking-[3px] transition-all"
                     >
@@ -1516,6 +1658,7 @@ export default function App() {
                     <motion.button
                       whileHover={{ scale: 1.05, color: "#fff" }}
                       whileTap={{ scale: 0.95 }}
+                      onMouseEnter={() => soundRef.current?.click()}
                       onClick={() => setStatus("MENU")}
                       className="w-full py-4 text-white/40 font-bold text-[10px] uppercase tracking-[3px] hover:text-white"
                     >
